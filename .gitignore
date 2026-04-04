@@ -1,0 +1,12 @@
+rescue-rover/node_modules/
+server/node_modules/
+server/.env
+rescue-rover/.env
+server/yolo/fire_dataset/
+server/yolo/runs/
+server/yolo/smoke-fire-1/
+server/yolo/smoke-fire-dataset/
+__pycache__/
+*.pyc
+.DS_Store
+archive (4).zip
