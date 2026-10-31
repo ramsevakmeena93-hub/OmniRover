@@ -1,0 +1,8 @@
+{
+  "name": "omnirover-root",
+  "private": true,
+  "scripts": {
+    "build": "cd rescue-rover && npm install && npm run build",
+    "vercel-build": "cd rescue-rover && npm install && npm run build"
+  }
+}

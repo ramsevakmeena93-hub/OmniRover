@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "buildCommand": "cd rescue-rover && npm install && npm run build",
+  "outputDirectory": "rescue-rover/dist",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
