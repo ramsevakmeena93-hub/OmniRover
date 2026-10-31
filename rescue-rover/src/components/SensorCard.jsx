@@ -34,7 +34,9 @@ export default function SensorCard({ label, value, unit, icon, status, min, max,
       </div>
 
       <div className="flex items-end gap-2">
-        <span className={`text-4xl font-bold font-mono leading-none ${valueColor}`}>{value}</span>
+        <span className={`text-4xl font-bold font-mono leading-none ${valueColor}`}>
+          {typeof value === 'number' ? Math.round(value * 10) / 10 : value}
+        </span>
         <span className="text-gray-500 text-sm mb-1">{unit}</span>
       </div>
 
