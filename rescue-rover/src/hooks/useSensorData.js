@@ -1,16 +1,19 @@
 /**
- * useSensorData — Real WebSocket hook
- * Connects to ws://localhost:5000
- * Falls back to /api/sensors polling if WebSocket fails
+ * useSensorData — DEMO MODE (no hardware required)
+ * Generates realistic simulated sensor data locally.
+ * No WebSocket or HTTP connections are made.
  */
 import { useState, useEffect, useRef } from 'react'
-import axios from 'axios'
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:5000'
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function clamp(v, min, max) { return Math.min(max, Math.max(min, v)) }
+
+function jitter(current, step, min, max) {
+  return clamp(current + (Math.random() - 0.5) * 2 * step, min, max)
+}
 
 function getRiskLevel(data) {
-  if (!data.hardwareConnected) return 'OFFLINE'
   if (data.gas > 300 || data.temperature > 40 || data.distance < 50) return 'DANGER'
   if (data.gas > 200 || data.temperature > 35 || data.distance < 100) return 'WARNING'
   return 'SAFE'
@@ -18,17 +21,17 @@ function getRiskLevel(data) {
 
 function getAlerts(data) {
   const alerts = []
-  if (data.gas > 300) alerts.push({ id: 'gas', msg: 'TOXIC GAS DETECTED — EVACUATE IMMEDIATELY', level: 'DANGER' })
-  if (data.temperature > 40) alerts.push({ id: 'temp', msg: 'EXTREME HEAT RISK — THERMAL HAZARD ACTIVE', level: 'DANGER' })
-  if (data.distance < 50) alerts.push({ id: 'dist', msg: 'OBSTACLE ALERT — COLLISION IMMINENT', level: 'WARNING' })
-  if (data.smokeDetected) alerts.push({ id: 'smoke', msg: 'SMOKE DETECTED — FIRE RISK ELEVATED', level: 'WARNING' })
-  if (data.humanDetected) alerts.push({ id: 'human', msg: 'SURVIVOR DETECTED — DEPLOY RESCUE TEAM', level: 'WARNING' })
+  if (data.gas > 300)        alerts.push({ id: 'gas',   msg: 'TOXIC GAS DETECTED — EVACUATE IMMEDIATELY',      level: 'DANGER'  })
+  if (data.temperature > 40) alerts.push({ id: 'temp',  msg: 'EXTREME HEAT RISK — THERMAL HAZARD ACTIVE',       level: 'DANGER'  })
+  if (data.distance < 50)    alerts.push({ id: 'dist',  msg: 'OBSTACLE ALERT — COLLISION IMMINENT',             level: 'WARNING' })
+  if (data.smokeDetected)    alerts.push({ id: 'smoke', msg: 'SMOKE DETECTED — FIRE RISK ELEVATED',             level: 'WARNING' })
+  if (data.humanDetected)    alerts.push({ id: 'human', msg: 'SURVIVOR DETECTED — DEPLOY RESCUE TEAM',          level: 'WARNING' })
   return alerts
 }
 
 function getRecommendation(data, risk) {
   if (risk === 'DANGER') {
-    if (data.gas > 300) return 'CRITICAL: Toxic gas levels exceed safe threshold. Deploy gas masks. Initiate immediate evacuation protocol. Do not send personnel without full HAZMAT gear.'
+    if (data.gas > 300)        return 'CRITICAL: Toxic gas levels exceed safe threshold. Deploy gas masks. Initiate immediate evacuation protocol. Do not send personnel without full HAZMAT gear.'
     if (data.temperature > 40) return 'CRITICAL: Thermal hazard detected. Risk of heat stroke for survivors. Deploy cooling units. Prioritize extraction within 10 minutes.'
     return 'CRITICAL: Multiple hazards detected. Halt rover advance. Request aerial support. Establish safe perimeter at 200m.'
   }
@@ -40,85 +43,104 @@ function getRecommendation(data, risk) {
   return 'ZONE CLEAR: No immediate threats. Continue systematic search pattern. All systems nominal.'
 }
 
-function enrich(raw) {
-  const risk = getRiskLevel(raw)
-  return {
-    ...raw,
-    risk,
-    alerts: getAlerts(raw),
-    // Use server-provided LLM recommendation if available, else fallback
-    recommendation: raw.recommendation || getRecommendation(raw, risk),
-  }
+// ── initial state ─────────────────────────────────────────────────────────────
+
+const INITIAL = {
+  temperature:     28,
+  gas:             95,
+  distance:        180,
+  ultrasonic1:     180,
+  ultrasonic2:     220,
+  ultrasonic3:     200,
+  humidity:        55,
+  pressure:        1013,
+  smokeDetected:   false,
+  humanDetected:   false,
+  debrisDetected:  false,
+  hardwareConnected: true,
+  lat:             28.6139,
+  lng:             77.2090,
 }
 
-export function useSensorData() {
-  const [current, setCurrent] = useState(null)
-  const [history, setHistory] = useState([])
-  const [tempHistory, setTempHistory] = useState([])
-  const [gasHistory, setGasHistory] = useState([])
-  const [ultrasonicHistory, setUltrasonicHistory] = useState([])
-  const [labels, setLabels] = useState([])
-  const [connected, setConnected] = useState(false)
-  const wsRef = useRef(null)
-  const pollRef = useRef(null)
+// ── hook ──────────────────────────────────────────────────────────────────────
 
-  function applyData(raw) {
-    const data = enrich(raw)
-    setCurrent(data)
-    setHistory(h => [data, ...h].slice(0, 100))
-    setTempHistory(h => [...h, data.temperature].slice(-20))
-    setGasHistory(h => [...h, data.gas].slice(-20))
-    setUltrasonicHistory(h => [...h, data.ultrasonic1 ?? data.distance ?? 200].slice(-20))
-    setLabels(l => [...l, new Date().toLocaleTimeString()].slice(-20))
-  }
+export function useSensorData() {
+  const [current,            setCurrent]            = useState(null)
+  const [history,            setHistory]            = useState([])
+  const [tempHistory,        setTempHistory]        = useState([])
+  const [gasHistory,         setGasHistory]         = useState([])
+  const [ultrasonicHistory,  setUltrasonicHistory]  = useState([])
+  const [labels,             setLabels]             = useState([])
+
+  // live sensor state carried between ticks
+  const state = useRef({ ...INITIAL })
+  // countdown until next "event" (spike or detection toggle)
+  const eventCountdown = useRef(Math.floor(Math.random() * 15) + 8)
 
   useEffect(() => {
-    let ws
-    let reconnectTimer
+    const tick = () => {
+      const s = state.current
 
-    function connect() {
-      ws = new WebSocket(WS_URL)
-      wsRef.current = ws
+      // Random walk for continuous sensors
+      s.temperature   = jitter(s.temperature,   0.4,  15,  55)
+      s.gas           = jitter(s.gas,            8,    40, 420)
+      s.distance      = jitter(s.distance,       6,    20, 350)
+      s.ultrasonic1   = jitter(s.ultrasonic1,    6,    20, 350)
+      s.ultrasonic2   = jitter(s.ultrasonic2,    5,    30, 400)
+      s.ultrasonic3   = jitter(s.ultrasonic3,    5,    30, 400)
+      s.humidity      = jitter(s.humidity,       0.5,  20,  90)
+      s.pressure      = jitter(s.pressure,       0.3, 990, 1030)
 
-      ws.onopen = () => {
-        setConnected(true)
-        console.log('[WS] Connected')
-        // Stop polling if it was running
-        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+      // Occasional event: toggle detections or spike a sensor
+      eventCountdown.current--
+      if (eventCountdown.current <= 0) {
+        eventCountdown.current = Math.floor(Math.random() * 20) + 8
+        const roll = Math.random()
+        if      (roll < 0.25) s.humanDetected  = !s.humanDetected
+        else if (roll < 0.45) s.smokeDetected  = !s.smokeDetected
+        else if (roll < 0.55) s.debrisDetected = !s.debrisDetected
+        else if (roll < 0.65) s.gas           = clamp(s.gas + 120, 40, 420)
+        else if (roll < 0.75) s.temperature   = clamp(s.temperature + 8, 15, 55)
+        else if (roll < 0.85) s.distance      = clamp(s.distance - 60, 20, 350)
       }
 
-      ws.onmessage = (e) => {
-        try { applyData(JSON.parse(e.data)) } catch {}
+      // GPS drift (tiny random walk)
+      s.lat += (Math.random() - 0.5) * 0.0002
+      s.lng += (Math.random() - 0.5) * 0.0002
+
+      const risk           = getRiskLevel(s)
+      const alerts         = getAlerts(s)
+      const recommendation = getRecommendation(s, risk)
+
+      const data = {
+        ...s,
+        risk,
+        alerts,
+        recommendation,
+        hardwareConnected: true,
       }
 
-      ws.onclose = () => {
-        setConnected(false)
-        console.warn('[WS] Disconnected — falling back to polling')
-        startPolling()
-        reconnectTimer = setTimeout(connect, 5000) // retry WS every 5s
-      }
-
-      ws.onerror = () => ws.close()
+      setCurrent(data)
+      setHistory(h         => [data, ...h].slice(0, 100))
+      setTempHistory(h     => [...h, Math.round(data.temperature * 10) / 10].slice(-20))
+      setGasHistory(h      => [...h, Math.round(data.gas)].slice(-20))
+      setUltrasonicHistory(h => [...h, Math.round(data.ultrasonic1)].slice(-20))
+      setLabels(l          => [...l, new Date().toLocaleTimeString()].slice(-20))
     }
 
-    function startPolling() {
-      if (pollRef.current) return
-      pollRef.current = setInterval(async () => {
-        try {
-          const res = await axios.get(`${API_URL}/api/sensors`)
-          applyData(res.data)
-        } catch {}
-      }, 2000)
-    }
-
-    connect()
-
-    return () => {
-      clearTimeout(reconnectTimer)
-      if (pollRef.current) clearInterval(pollRef.current)
-      if (wsRef.current) wsRef.current.close()
-    }
+    // First tick immediately so UI doesn't show loading screen
+    tick()
+    const id = setInterval(tick, 1500)
+    return () => clearInterval(id)
   }, [])
 
-  return { current, history, tempHistory, gasHistory, ultrasonicHistory, labels, connected }
+  return {
+    current,
+    history,
+    tempHistory,
+    gasHistory,
+    ultrasonicHistory,
+    labels,
+    connected: true,   // always show as connected in demo mode
+  }
 }

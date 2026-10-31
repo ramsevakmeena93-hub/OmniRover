@@ -83,7 +83,13 @@ export default function App() {
     camDetections?.smokeDetected, camDetections?.gasDetected, mergedSensor?.debrisDetected,
   ])
 
-  if (!current || current.temperature === undefined) return <LoadingScreen />
+  if (!current || current.temperature === undefined) return (
+    <div className="flex items-center justify-center h-screen bg-army-dark">
+      <div className="text-army-accent text-2xl font-bold tracking-widest animate-pulse" style={{fontFamily:'Rajdhani,sans-serif'}}>
+        INITIALIZING DEMO...
+      </div>
+    </div>
+  )
 
   const tempStatus = getSensorStatus(current.temperature, 35, 40)
   const gasStatus  = getSensorStatus(current.gas, 200, 300)
