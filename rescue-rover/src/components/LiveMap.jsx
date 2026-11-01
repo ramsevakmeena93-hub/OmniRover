@@ -131,70 +131,17 @@ export default function LiveMap({ risk, sensorData }) {
     }
   }, [userPos])
 
-  // Rover patrol loop — starts once GPS arrives
+  // Rover marker — placed once at initial position, no movement in demo mode
   useEffect(() => {
-    if (!roverPos || timerRef.current) return
-    timerRef.current = setInterval(() => {
-      tickRef.current++
-      // Change direction every 15 steps for natural patrol sweep
-      if (tickRef.current % 15 === 0) {
-        const a = Math.random() * Math.PI * 2
-        dirRef.current = { dlat: Math.cos(a), dlng: Math.sin(a) }
-      }
-      const prev = roverRef.current
-      const next = { lat: prev.lat + dirRef.current.dlat * STEP, lng: prev.lng + dirRef.current.dlng * STEP }
-      roverRef.current = next
-      setRoverPos({ ...next })
-
-      const coord = fromLonLat([next.lng, next.lat])
-
-      // Rover marker
-      if (!roverFeat.current) {
-        roverFeat.current = new Feature(new Point(coord))
-        roverFeat.current.setStyle(roverStyle(risk))
-        vsMarker.current.addFeature(roverFeat.current)
-      } else {
-        roverFeat.current.getGeometry().setCoordinates(coord)
-        roverFeat.current.setStyle(roverStyle(risk))
-      }
-
-      // Trail
-      trailPts.current.push(coord)
-      if (trailPts.current.length > 200) trailPts.current.shift()
-      if (!trailFeat.current && trailPts.current.length > 1) {
-        trailFeat.current = new Feature(new LineString([...trailPts.current]))
-        trailFeat.current.setStyle(trailStyle())
-        vsTrail.current.addFeature(trailFeat.current)
-      } else if (trailFeat.current) {
-        trailFeat.current.getGeometry().setCoordinates([...trailPts.current])
-      }
-
-      // ── DETECTION MARKERS — only from real sensor data ──
-      const sd = sensorRef.current
-      const drops = []
-      if (sd?.humanDetected)          drops.push("human")
-      if (sd?.smokeDetected)          drops.push("smoke")
-      if ((sd?.gas ?? 0) > 300)       drops.push("gas")
-      if (sd?.debrisDetected)         drops.push("debris")
-
-      drops.forEach(type => {
-        const key = `${type}_${next.lat.toFixed(4)}_${next.lng.toFixed(4)}`
-        if (pinKeys.current.has(key)) return
-        pinKeys.current.add(key)
-        const f = new Feature(new Point(coord))
-        f.setStyle(pinStyle(type))
-        vsPin.current.addFeature(f)
-        const t = new Date().toLocaleTimeString("en-IN", { hour12: false })
-        setLog(l => [{ type, lat: next.lat.toFixed(5), lng: next.lng.toFixed(5), time: t }, ...l].slice(0, 12))
-        setTotal(n => n + 1)
-      })
-    }, 1000)
-    return () => { clearInterval(timerRef.current); timerRef.current = null }
+    if (!roverPos || roverFeat.current) return
+    const coord = fromLonLat([roverPos.lng, roverPos.lat])
+    roverFeat.current = new Feature(new Point(coord))
+    roverFeat.current.setStyle(roverStyle(risk))
+    vsMarker.current.addFeature(roverFeat.current)
   }, [!!roverPos])
 
   // Update rover color on risk change
   useEffect(() => { if (roverFeat.current) roverFeat.current.setStyle(roverStyle(risk)) }, [risk])
-
   const zoom = (d) => { const v = mapObj.current?.getView(); if (v) v.animate({ zoom: v.getZoom() + d, duration: 250 }) }
   const recenter = () => { if (roverRef.current && mapObj.current) mapObj.current.getView().animate({ center: fromLonLat([roverRef.current.lng, roverRef.current.lat]), zoom: 18, duration: 400 }) }
   const clearAll = () => { vsPin.current.clear(); pinKeys.current.clear(); setLog([]); setTotal(0) }
